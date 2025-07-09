@@ -1,0 +1,305 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.fft import fft, ifft
+from sklearn.metrics import mean_squared_error
+
+# Parameters
+N = 256  # Number of subcarriers
+CP = 16  # Length of cyclic prefix
+mod_order = 2  # QPSK (2 bits per symbol)
+num_symbols = 1  # Number of OFDM symbols
+SNR_dB = 20  # Signal-to-noise ratio in dB
+mu = 0.01  # LMS step size
+taps = 32  # Number of taps for LMS filter
+
+# Generate random binary data
+data = np.random.randint(0, 2, (num_symbols, N * mod_order))
+
+# QPSK Modulation
+def qpsk_modulate(bits):
+    symbols = (2 * bits[:, ::2] - 1) + 1j * (2 * bits[:, 1::2] - 1)
+    return symbols
+
+modulated_data = qpsk_modulate(data)
+
+# IFFT to generate time-domain signal
+time_domain_signal = ifft(modulated_data, N, axis=1)
+
+# Add cyclic prefix
+cp_signal = np.hstack([time_domain_signal[:, -CP:], time_domain_signal])
+
+# Transmit signal (add noise)
+noise = (np.random.randn(*cp_signal.shape) + 1j * np.random.randn(*cp_signal.shape)) / np.sqrt(2)
+signal_power = np.mean(np.abs(cp_signal) ** 2)
+noise_power = signal_power / (10 ** (SNR_dB / 10))
+noisy_signal = cp_signal + np.sqrt(noise_power) * noise
+
+# Receiver: Remove cyclic prefix
+received_signal = noisy_signal[:, CP:]
+
+# FFT to recover frequency-domain data
+received_freq = fft(received_signal, N, axis=1)
+
+# LMS Adaptive Equalization
+def lms_equalizer(received_signal, mu=0.01, taps=32):
+    N = received_signal.shape[1]
+    equalized_signal = np.zeros_like(received_signal)
+    weights = np.zeros((received_signal.shape[0], taps), dtype=complex)
+    for i in range(received_signal.shape[0]):
+        for n in range(taps, N):
+            x = received_signal[i, n-taps:n]
+            d = received_signal[i, n]
+            y = np.dot(weights[i], x)
+            e = d - y
+            weights[i] += mu * np.conj(e) * x
+            equalized_signal[i, n] = y
+    return equalized_signal
+
+equalized_signal = lms_equalizer(received_freq)
+
+# Plotting
+plt.figure(figsize=(12, 8))
+
+# Time-domain signal (first symbol)
+plt.subplot(2, 2, 1)
+plt.plot(np.real(cp_signal[0]), label='Real Part')
+plt.plot(np.imag(cp_signal[0]), label='Imaginary Part')
+plt.title('Transmitted Time-Domain Signal')
+plt.legend()
+
+# Frequency-domain signal (first symbol)
+plt.subplot(2, 2, 2)
+plt.plot(np.abs(received_freq[0]), label='Magnitude')
+plt.title('Received Frequency-Domain Signal')
+plt.legend()
+
+# Equalized signal using LMS
+plt.subplot(2, 2, 3)
+plt.plot(np.abs(equalized_signal[0]), label='Magnitude')
+plt.title('Equalized Signal (LMS)')
+plt.legend()
+
+# Signal-to-Noise Ratio
+plt.subplot(2, 2, 4)
+plt.text(0.1, 0.5, f'SNR: {SNR_dB} dB', fontsize=12)
+plt.axis('off')
+plt.title('Signal-to-Noise Ratio')
+
+plt.tight_layout()
+plt.show()
+
+# Bit Error Rate (BER) vs. SNR
+snr_values = np.arange(0, 31, 5)
+ber_values = []
+
+for snr in snr_values:
+    noise_power = signal_power / (10 ** (snr / 10))
+    noisy_signal = cp_signal + np.sqrt(noise_power) * noise
+    received_signal = noisy_signal[:, CP:]
+    received_freq = fft(received_signal, N, axis=1)
+    equalized_signal = lms_equalizer(received_freq)
+    mse = mean_squared_error(np.real(modulated_data.flatten()), np.real(equalized_signal.flatten())) + \
+          mean_squared_error(np.imag(modulated_data.flatten()), np.imag(equalized_signal.flatten()))
+    ber_values.append(mse)
+
+plt.figure(figsize=(8, 6))
+plt.semilogy(snr_values, ber_values, marker='o', label='LMS Equalization')
+plt.title('BER vs. SNR for OFDM System with LMS Equalization')
+plt.xlabel('SNR (dB)')
+plt.ylabel('BER')
+plt.grid(True)
+plt.legend()
+plt.show()
+
+# Constellation Diagram Before and After Equalization
+plt.figure(figsize=(8, 6))
+plt.scatter(np.real(modulated_data.flatten()), np.imag(modulated_data.flatten()), color='blue', label='Transmitted')
+plt.scatter(np.real(received_freq.flatten()), np.imag(received_freq.flatten()), color='red', label='Received')
+plt.title('Constellation Diagram Before Equalization')
+plt.xlabel('In-Phase')
+plt.ylabel('Quadrature')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+plt.figure(figsize=(8, 6))
+plt.scatter(np.real(modulated_data.flatten()), np.imag(modulated_data.flatten()), color='blue', label='Transmitted')
+plt.scatter(np.real(equalized_signal.flatten()), np.imag(equalized_signal.flatten()), color='green', label='Equalized')
+plt.title('Constellation Diagram After LMS Equalization')
+plt.xlabel('In-Phase')
+plt.ylabel('Quadrature')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# SNR vs. Mean Squared Error (MSE)
+mse_values = []
+
+for snr in snr_values:
+    noise_power = signal_power / (10 ** (snr / 10))
+    noisy_signal = cp_signal + np.sqrt(noise_power) * noise
+    received_signal = noisy_signal[:, CP:]
+    received_freq = fft(received_signal, N, axis=1)
+    equalized_signal = lms_equalizer(received_freq)
+    mse = mean_squared_error(np.real(modulated_data.flatten()), np.real(equalized_signal.flatten())) + \
+          mean_squared_error(np.imag(modulated_data.flatten()), np.imag(equalized_signal.flatten()))
+    mse_values.append(mse)
+
+plt.figure(figsize=(8, 6))
+plt.plot(snr_values, mse_values, marker='x', color='purple', label='LMS Equalization')
+plt.title('SNR vs. MSE for OFDM System with LMS Equalization')
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.fft import fft, ifft
+from sklearn.metrics import mean_squared_error
+
+# Parameters
+N = 256  # Number of subcarriers
+CP = 16  # Length of cyclic prefix
+mod_order = 2  # QPSK (2 bits per symbol)
+num_symbols = 1  # Number of OFDM symbols
+SNR_dB = 20  # Signal-to-noise ratio in dB
+mu = 0.01  # LMS step size
+taps = 32  # Number of taps for LMS filter
+
+# Generate random binary data
+data = np.random.randint(0, 2, (num_symbols, N * mod_order))
+
+# QPSK Modulation
+def qpsk_modulate(bits):
+    symbols = (2 * bits[:, ::2] - 1) + 1j * (2 * bits[:, 1::2] - 1)
+    return symbols
+
+modulated_data = qpsk_modulate(data)
+
+# IFFT to generate time-domain signal
+time_domain_signal = ifft(modulated_data, N, axis=1)
+
+# Add cyclic prefix
+cp_signal = np.hstack([time_domain_signal[:, -CP:], time_domain_signal])
+
+# Transmit signal (add noise)
+noise = (np.random.randn(*cp_signal.shape) + 1j * np.random.randn(*cp_signal.shape)) / np.sqrt(2)
+signal_power = np.mean(np.abs(cp_signal) ** 2)
+noise_power = signal_power / (10 ** (SNR_dB / 10))
+noisy_signal = cp_signal + np.sqrt(noise_power) * noise
+
+# Receiver: Remove cyclic prefix
+received_signal = noisy_signal[:, CP:]
+
+# FFT to recover frequency-domain data
+received_freq = fft(received_signal, N, axis=1)
+
+# LMS Adaptive Equalization
+def lms_equalizer(received_signal, mu=0.01, taps=32):
+    N = received_signal.shape[1]
+    equalized_signal = np.zeros_like(received_signal)
+    weights = np.zeros((received_signal.shape[0], taps), dtype=complex)
+    for i in range(received_signal.shape[0]):
+        for n in range(taps, N):
+            x = received_signal[i, n-taps:n]
+            d = received_signal[i, n]
+            y = np.dot(weights[i], x)
+            e = d - y
+            weights[i] += mu * np.conj(e) * x
+            equalized_signal[i, n] = y
+    return equalized_signal
+
+equalized_signal = lms_equalizer(received_freq)
+
+# Plotting
+plt.figure(figsize=(12, 8))
+
+# Time-domain signal (first symbol)
+plt.subplot(2, 2, 1)
+plt.plot(np.real(cp_signal[0]), label='Real Part')
+plt.plot(np.imag(cp_signal[0]), label='Imaginary Part')
+plt.title('Transmitted Time-Domain Signal')
+plt.legend()
+
+# Frequency-domain signal (first symbol)
+plt.subplot(2, 2, 2)
+plt.plot(np.abs(received_freq[0]), label='Magnitude')
+plt.title('Received Frequency-Domain Signal')
+plt.legend()
+
+# Equalized signal using LMS
+plt.subplot(2, 2, 3)
+plt.plot(np.abs(equalized_signal[0]), label='Magnitude')
+plt.title('Equalized Signal (LMS)')
+plt.legend()
+
+# Signal-to-Noise Ratio
+plt.subplot(2, 2, 4)
+plt.text(0.1, 0.5, f'SNR: {SNR_dB} dB', fontsize=12)
+plt.axis('off')
+plt.title('Signal-to-Noise Ratio')
+
+plt.tight_layout()
+plt.show()
+
+# Bit Error Rate (BER) vs. SNR
+snr_values = np.arange(0, 31, 5)
+ber_values = []
+
+for snr in snr_values:
+    noise_power = signal_power / (10 ** (snr / 10))
+    noisy_signal = cp_signal + np.sqrt(noise_power) * noise
+    received_signal = noisy_signal[:, CP:]
+    received_freq = fft(received_signal, N, axis=1)
+    equalized_signal = lms_equalizer(received_freq)
+    mse = mean_squared_error(np.real(modulated_data.flatten()), np.real(equalized_signal.flatten())) + \
+          mean_squared_error(np.imag(modulated_data.flatten()), np.imag(equalized_signal.flatten()))
+    ber_values.append(mse)
+
+plt.figure(figsize=(8, 6))
+plt.semilogy(snr_values, ber_values, marker='o', label='LMS Equalization')
+plt.title('BER vs. SNR for OFDM System with LMS Equalization')
+plt.xlabel('SNR (dB)')
+plt.ylabel('BER')
+plt.grid(True)
+plt.legend()
+plt.show()
+
+# Constellation Diagram Before and After Equalization
+plt.figure(figsize=(8, 6))
+plt.scatter(np.real(modulated_data.flatten()), np.imag(modulated_data.flatten()), color='blue', label='Transmitted')
+plt.scatter(np.real(received_freq.flatten()), np.imag(received_freq.flatten()), color='red', label='Received')
+plt.title('Constellation Diagram Before Equalization')
+plt.xlabel('In-Phase')
+plt.ylabel('Quadrature')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+plt.figure(figsize=(8, 6))
+plt.scatter(np.real(modulated_data.flatten()), np.imag(modulated_data.flatten()), color='blue', label='Transmitted')
+plt.scatter(np.real(equalized_signal.flatten()), np.imag(equalized_signal.flatten()), color='green', label='Equalized')
+plt.title('Constellation Diagram After LMS Equalization')
+plt.xlabel('In-Phase')
+plt.ylabel('Quadrature')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# SNR vs. Mean Squared Error (MSE)
+mse_values = []
+
+for snr in snr_values:
+    noise_power = signal_power / (10 ** (snr / 10))
+    noisy_signal = cp_signal + np.sqrt(noise_power) * noise
+    received_signal = noisy_signal[:, CP:]
+    received_freq = fft(received_signal, N, axis=1)
+    equalized_signal = lms_equalizer(received_freq)
+    mse = mean_squared_error(np.real(modulated_data.flatten()), np.real(equalized_signal.flatten())) + \
+          mean_squared_error(np.imag(modulated_data.flatten()), np.imag(equalized_signal.flatten()))
+    mse_values.append(mse)
+
+plt.figure(figsize=(8, 6))
+plt.plot(snr_values, mse_values, marker='x', color='purple', label='LMS Equalization')
+plt.title('SNR vs. MSE for OFDM System with LMS Equalization')
+plt.xlabel('SNR (dB)')
+plt.ylabel('MSE')
+plt.grid(True)
+plt.legend()
+plt.show()
